@@ -23,13 +23,16 @@ def create_bot(account, emoji, grab_time):
     bot = discum.Client(token=account["token"], log=False)
 
     @bot.gateway.command
-    def on_ready(resp):
-        if resp.event.ready:
-            try:
-                user_id = resp.event.ready['user']['id']
-                print(f"[{account['channel_id']}] → Đăng nhập với user_id: {user_id}")
-            except Exception as e:
-                print(f"Lỗi lấy user_id từ ready: {e}")
+def on_ready(resp):
+    if resp.event.ready:
+        try:
+            # Get data from resp.parsed.auto()
+            ready_data = resp.parsed.auto()
+            # Access the user ID from the parsed data
+            user_id = ready_data['user']['id']
+            print(f"[{account['channel_id']}] → Đăng nhập với user_id: {user_id}")
+        except Exception as e:
+            print(f"Lỗi lấy user_id từ ready: {e}")
 
     @bot.gateway.command
     def on_message(resp):
