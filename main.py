@@ -20,20 +20,22 @@ fixed_emojis = ["1️⃣", "2️⃣", "3️⃣", "1️⃣", "2️⃣", "3️⃣"
 bots = []
 
 def create_bot(account, emoji, grab_time):
+    # This line starts the function block
     bot = discum.Client(token=account["token"], log=False)
 
+    # This decorator and function must be indented
     @bot.gateway.command
-def on_ready(resp):
-    if resp.event.ready:
-        try:
-            # Get data from resp.parsed.auto()
-            ready_data = resp.parsed.auto()
-            # Access the user ID from the parsed data
-            user_id = ready_data['user']['id']
-            print(f"[{account['channel_id']}] → Đăng nhập với user_id: {user_id}")
-        except Exception as e:
-            print(f"Lỗi lấy user_id từ ready: {e}")
+    def on_ready(resp):
+        if resp.event.ready:
+            try:
+                # Use the corrected logic from our previous conversation
+                ready_data = resp.parsed.auto()
+                user_id = ready_data['user']['id']
+                print(f"[{account['channel_id']}] → Đăng nhập với user_id: {user_id}")
+            except Exception as e:
+                print(f"Lỗi lấy user_id từ ready: {e}")
 
+    # This decorator and function must also be indented at the same level
     @bot.gateway.command
     def on_message(resp):
         if resp.event.message:
