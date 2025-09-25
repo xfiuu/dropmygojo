@@ -1,9 +1,12 @@
-import discum
-import threading
-import time
+import discord
+from discord.ext import commands
+import asyncio
 import os
+import threading
 from keep_alive import keep_alive
 
+# --- Cấu hình ---
+# Lấy thông tin tài khoản từ biến môi trường
 accounts = [
     {"token": os.getenv("TOKEN1"), "channel_id": os.getenv("CHANNEL_ID")},
     {"token": os.getenv("TOKEN2"), "channel_id": os.getenv("CHANNEL_ID")},
@@ -13,88 +16,134 @@ accounts = [
     {"token": os.getenv("TOKEN6"), "channel_id": os.getenv("CHANNEL_ID")},
 ]
 
-karuta_id = "646937666251915264"
-ktb_channel_id = "1398168890122567680"
-fixed_emojis = ["1️⃣", "2️⃣", "3️⃣", "1️⃣", "2️⃣", "3️⃣"]
+# ID của bot Karuta và kênh để gửi lệnh "kt b"
+KARUTA_ID = 646937666251915264
+try:
+    # discord.py-self yêu cầu ID là số nguyên (integer)
+    KTB_CHANNEL_ID = int(os.getenv("KTB_CHANNEL_ID")) 
+except (ValueError, TypeError):
+    print("Lỗi: KTB_CHANNEL_ID không hợp lệ hoặc chưa được thiết lập trong biến môi trường.")
+    KTB_CHANNEL_ID = None
 
-bots = []
 
-def create_bot(account, emoji, grab_time):
-    # This line starts the function block
-    bot = discum.Client(token=account["token"], log=False)
+FIXED_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "1️⃣", "2️⃣", "3️⃣"]
+GRAB_TIMES = [1.3, 2.3, 3.2, 1.3, 2.3, 3.2]
 
-    # This decorator and function must be indented
-    @bot.gateway.command
-    def on_ready(resp):
-        if resp.event.ready:
-            try:
-                # Use the corrected logic from our previous conversation
-                ready_data = resp.parsed.auto()
-                user_id = ready_data['user']['id']
-                print(f"[{account['channel_id']}] → Đăng nhập với user_id: {user_id}")
-            except Exception as e:
-                print(f"Lỗi lấy user_id từ ready: {e}")
+# Danh sách để lưu các bot đã đăng nhập thành công
+running_bots = []
 
-    # This decorator and function must also be indented at the same level
-    @bot.gateway.command
-    def on_message(resp):
-        if resp.event.message:
-            msg = resp.parsed.auto()
-            author = msg.get("author", {}).get("id")
-            content = msg.get("content", "")
-            if author == karuta_id and "is dropping 3 cards!" in content:
-                if msg.get("channel_id") == str(account["channel_id"]):
-                    threading.Thread(target=react_and_message, args=(bot, msg, emoji, grab_time, account)).start()
+# --- Hàm xử lý chính ---
 
-    bots.append(bot)
-    threading.Thread(target=run_bot, args=(bot, account), daemon=True).start()
-
-def react_and_message(bot, msg, emoji, grab_time, account):
-    time.sleep(grab_time)
+async def react_and_message(message, emoji, delay, bot, account_info):
+    """Đợi một khoảng thời gian, sau đó thả reaction và gửi tin nhắn."""
+    await asyncio.sleep(delay)
+    
+    # Thả reaction vào tin nhắn drop
     try:
-        bot.addReaction(msg["channel_id"], msg["id"], emoji)
-        print(f"[{account['channel_id']}] → Thả reaction {emoji}")
+        await message.add_reaction(emoji)
+        print(f"[{account_info['channel_id']}] → Đã thả reaction {emoji} cho user {bot.user}")
     except Exception as e:
-        print(f"[{account['channel_id']}] → Lỗi thả reaction: {e}")
-
-    try:
-        bot.sendMessage(ktb_channel_id, "kt z")
-        print(f"[{account['channel_id']}] → Nhắn 'kt z' ở kênh riêng")
-    except Exception as e:
-        print(f"[{account['channel_id']}] → Lỗi nhắn kt z: {e}")
-
-def run_bot(bot, account):
-    while True:
+        print(f"[{account_info['channel_id']}] → Lỗi khi thả reaction: {e}")
+    
+    await asyncio.sleep(2) # Đợi 2 giây trước khi gửi lệnh
+    
+    # Gửi lệnh "kt b" vào kênh riêng
+    if KTB_CHANNEL_ID:
         try:
-            bot.gateway.run(auto_reconnect=True)
+            target_channel = bot.get_channel(KTB_CHANNEL_ID)
+            if target_channel:
+                await target_channel.send("kt b")
+                print(f"[{account_info['channel_id']}] → Đã gửi 'kt b' từ user {bot.user}")
+            else:
+                print(f"[{account_info['channel_id']}] → Không tìm thấy kênh với ID: {KTB_CHANNEL_ID}")
         except Exception as e:
-            print(f"[{account['channel_id']}] → Bot lỗi, thử kết nối lại: {e}")
-        time.sleep(5)
+            print(f"[{account_info['channel_id']}] → Lỗi khi gửi 'kt b': {e}")
 
-def drop_loop():
-    acc_count = len(accounts)
+async def run_account(account, emoji, grab_time):
+    """Khởi tạo, định nghĩa sự kiện và chạy một instance bot."""
+    bot = commands.Bot(command_prefix="!", self_bot=True)
+
+    @bot.event
+    async def on_ready():
+        """Sự kiện được kích hoạt khi bot đã đăng nhập và sẵn sàng."""
+        print(f"[{account['channel_id']}] → Đăng nhập thành công với user: {bot.user} (ID: {bot.user.id})")
+        running_bots.append(bot) # Thêm bot vào danh sách đang chạy
+
+    @bot.event
+    async def on_message(message):
+        """Sự kiện được kích hoạt mỗi khi có tin nhắn mới."""
+        # Chỉ xử lý tin nhắn từ Karuta, trong đúng kênh và có nội dung drop
+        if message.author.id == KARUTA_ID and \
+           "is dropping 3 cards!" in message.content and \
+           str(message.channel.id) == account["channel_id"]:
+            
+            # Tạo một task mới để xử lý reaction và tin nhắn mà không làm block bot
+            asyncio.create_task(react_and_message(message, emoji, grab_time, bot, account))
+
+    try:
+        await bot.start(account["token"])
+    except discord.errors.LoginFailure:
+        print(f"Lỗi đăng nhập với token bắt đầu bằng: {account['token'][:6]}... Token không hợp lệ.")
+    except Exception as e:
+        print(f"Một lỗi không xác định đã xảy ra với bot {account['token'][:6]}...: {e}")
+
+async def drop_loop():
+    """Vòng lặp vô hạn để gửi lệnh 'kd' tuần tự qua các tài khoản."""
+    # Đợi cho đến khi tất cả các bot đã sẵn sàng
+    print("Đang đợi tất cả các tài khoản đăng nhập...")
+    while len(running_bots) < len(accounts):
+        await asyncio.sleep(1)
+    print("Tất cả các tài khoản đã sẵn sàng. Bắt đầu vòng lặp drop.")
+
     i = 0
     while True:
-        acc = accounts[i % acc_count]
         try:
-            bots[i % acc_count].sendMessage(str(acc["channel_id"]), "kd")
-            print(f"[{acc['channel_id']}] → Gửi lệnh k!d từ acc thứ {i % acc_count + 1}")
+            # Chọn bot và thông tin tài khoản tương ứng
+            bot = running_bots[i % len(running_bots)]
+            acc = accounts[i % len(accounts)]
+            channel_id = int(acc["channel_id"])
+            
+            channel = bot.get_channel(channel_id)
+            if channel:
+                await channel.send("kd")
+                print(f"[{channel_id}] → Đã gửi lệnh 'kd' từ user {bot.user} (Acc thứ {i % len(accounts) + 1})")
+            else:
+                print(f"[{channel_id}] → Không tìm thấy kênh để gửi lệnh 'kd' cho user {bot.user}.")
+                
         except Exception as e:
-            print(f"[{acc['channel_id']}] → Drop lỗi: {e}")
+            print(f"[{acc['channel_id']}] → Lỗi trong vòng lặp drop: {e}")
+        
         i += 1
-        time.sleep(305)
+        # Đợi 5 phút 5 giây (305 giây) trước khi gửi lệnh tiếp theo
+        await asyncio.sleep(305)
 
-keep_alive()
+async def main():
+    """Hàm chính để chạy tất cả các bot và vòng lặp drop đồng thời."""
+    # Chạy keep_alive trong một luồng riêng để không chặn asyncio
+    keep_alive_thread = threading.Thread(target=keep_alive)
+    keep_alive_thread.daemon = True
+    keep_alive_thread.start()
 
-# Gán thời gian grab cho từng acc
-grab_times = [1.3, 2.3, 3.2, 1.3, 2.3, 3.2]
+    # Tạo danh sách các task cần chạy
+    tasks = []
+    for i, acc in enumerate(accounts):
+        # Kiểm tra token có tồn tại không trước khi tạo task
+        if acc.get("token"):
+            emoji = FIXED_EMOJIS[i % len(FIXED_EMOJIS)]
+            grab_time = GRAB_TIMES[i]
+            tasks.append(run_account(acc, emoji, grab_time))
+        else:
+            print(f"Cảnh báo: Token thứ {i+1} chưa được thiết lập. Bỏ qua tài khoản này.")
 
-for i, acc in enumerate(accounts):
-    emoji = fixed_emojis[i % len(fixed_emojis)]
-    grab_time = grab_times[i]
-    create_bot(acc, emoji, grab_time)
+    # Thêm task của vòng lặp drop vào danh sách
+    if tasks: # Chỉ chạy drop_loop nếu có ít nhất một tài khoản hợp lệ
+        tasks.append(drop_loop())
+        # Chạy tất cả các task cùng lúc
+        await asyncio.gather(*tasks)
+    else:
+        print("Không có tài khoản nào được cấu hình để chạy.")
 
-threading.Thread(target=drop_loop, daemon=True).start()
 
-while True:
-    time.sleep(60)
+if __name__ == "__main__":
+    # Chạy hàm main của asyncio
+    asyncio.run(main())
